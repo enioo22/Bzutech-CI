@@ -26,20 +26,18 @@ STEP_USER_LOGIN_SCHEMA = vol.Schema(
 )
 
 
-async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str, Any]:
+async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> BzuTech:
     """Validate the user input allows us to connect."""
     hass.data[DOMAIN] = {}
     api = BzuTech(data[CONF_EMAIL], data[CONF_PASSWORD])
 
-    hass.data[DOMAIN]["bzuapi"] = api
-
     if not await api.start():
         raise InvalidAuth
 
-    return {"title": "BZUTech", "bzuapi": api}
+    return api
 
 
-def get_devices(hass: HomeAssistant, page: int) -> dict[str, Any]:
+def get_devices(api: BzuTech, page: int) -> dict[str, Any]:
     """Get device names on a dict for the showmenu."""
 
     devices = {}
@@ -48,20 +46,20 @@ def get_devices(hass: HomeAssistant, page: int) -> dict[str, Any]:
     last = first + 3
     counter = 0
 
-    for key in list(hass.data[DOMAIN]["bzuapi"].dispositivos.keys()):
+    for key in list(api.dispositivos.keys()):
         if first <= counter <= last:
             returnkey = "option" + str(i)
             devices[returnkey] = key
             i = i + 1
 
         counter = counter + 1
-    if len(list(hass.data[DOMAIN]["bzuapi"].dispositivos.keys())) > (page + 1) * 4:
+    if len(list(api.dispositivos.keys())) > (page + 1) * 4:
         devices["option5"] = "Mais dispositivos"
     return devices
 
 
 def get_sensors(
-    hass: HomeAssistant, devicepos: int, sensorport: int, page: int
+    api: BzuTech, devicepos: int, sensorport: int, page: int
 ) -> dict[str, Any]:
     """Get sensor names from a device on a dict for the showmenu."""
 
@@ -69,29 +67,21 @@ def get_sensors(
     first = page * 4
     last = first + 3
     counter = 0
-    chipid = list(hass.data[DOMAIN]["bzuapi"].dispositivos.keys())[devicepos]
+    chipid = list(api.dispositivos.keys())[devicepos]
     numSensors = len(
-        list(
-            hass.data[DOMAIN]["bzuapi"]
-            .dispositivos[chipid]
-            .get_sensor_names_on(str(sensorport))
-        )
+        list(api.dispositivos[chipid].get_sensor_names_on(str(sensorport)))
     )
 
     i = 1
 
-    for name in list(
-        hass.data[DOMAIN]["bzuapi"]
-        .dispositivos[chipid]
-        .get_sensor_names_on(str(sensorport))
-    ):
+    for name in list(api.dispositivos[chipid].get_sensor_names_on(str(sensorport))):
         if first <= counter <= last:
             sensors["option" + str(i)] = name
             i = i + 1
         counter = counter + 1
 
     if numSensors > 4 * (page + 1):
-        sensors["option5"] = "Outros Sensores"
+        sensors["option5"] = "More sensors"
 
     return sensors
 
@@ -100,6 +90,15 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for BZUTech."""
 
     VERSION = 1
+    api: BzuTech
+    email = ""
+    password = ""
+    devicepage = 0
+    sensorpage = 0
+    flowstep = 0
+    selecteddevice = 0
+    selectedport = 0
+    selectedsensor = 0
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -108,9 +107,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
         if user_input is not None:
             try:
-                await validate_input(self.hass, user_input)
-                self.hass.data[DOMAIN][CONF_EMAIL] = user_input[CONF_EMAIL]
-                self.hass.data[DOMAIN][CONF_PASSWORD] = user_input[CONF_PASSWORD]
+                self.api = await validate_input(self.hass, user_input)
             except CannotConnect:
                 errors["base"] = "cannot_connect"
             except InvalidAuth:
@@ -119,10 +116,9 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 _LOGGER.exception("Unexpected exception")
                 errors["base"] = "unknown"
             else:
-                self.hass.data[DOMAIN]["disppage"] = 0
-                self.hass.data[DOMAIN]["sensorpage"] = 0
+                self.email = user_input[CONF_EMAIL]
+                self.password = user_input[CONF_PASSWORD]
                 return await self.async_step_dispselect(user_input=user_input)
-                # return self.async_create_entry(title=info["title"], data=user_input)
         return self.async_show_form(
             step_id="user",
             data_schema=STEP_USER_LOGIN_SCHEMA,
@@ -134,123 +130,117 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Set up second step."""
-        self.hass.data[DOMAIN]["flowstep"] = 1
+        self.flowstep = 1
         return self.async_show_menu(
             step_id="dispselect",
-            menu_options=get_devices(self.hass, self.hass.data[DOMAIN]["disppage"]),
+            menu_options=get_devices(self.api, self.devicepage),
         )
 
     async def async_step_option1(self, user_input: dict) -> FlowResult:
         """Unification of the device configuration."""
-        tempStorage = self.hass.data[DOMAIN]
-        if tempStorage["flowstep"] == 1:
-            tempStorage["selecteddisp"] = 0
+        if self.flowstep == 1:
+            self.selecteddevice = 0
             return await self.async_step_portselect(user_input)
-        if tempStorage["flowstep"] == 2:
-            tempStorage["selectedport"] = 1
+        if self.flowstep == 2:
+            self.selectedport = 1
             return await self.async_step_sensorselect(user_input)
-        if tempStorage["flowstep"] == 3:
-            tempStorage["selectedsensor"] = 0
+        if self.flowstep == 3:
+            self.selectedsensor = self.sensorpage * 4 + 0
             return await self.async_step_configend()
         return await self.async_step_option1(user_input)
 
     async def async_step_option2(self, user_input: dict) -> FlowResult:
         """Unification of the device configuration menu options."""
-        tempStorage = self.hass.data[DOMAIN]
-        if tempStorage["flowstep"] == 1:
-            tempStorage["selecteddisp"] = 1
+        if self.flowstep == 1:
+            self.selecteddevice = 1
             return await self.async_step_portselect(user_input)
-        if tempStorage["flowstep"] == 2:
-            tempStorage["selectedport"] = 2
+        if self.flowstep == 2:
+            self.selectedport = 2
             return await self.async_step_sensorselect(user_input)
-        if tempStorage["flowstep"] == 3:
-            tempStorage["selectedsensor"] = 1
+        if self.flowstep == 3:
+            self.selectedsensor = self.sensorpage * 4 + 1
             return await self.async_step_configend()
         return await self.async_step_option2(user_input)
 
     async def async_step_option3(self, user_input: dict) -> FlowResult:
         """Unification of the device configuration menu options."""
-        tempStorage = self.hass.data[DOMAIN]
-        if tempStorage["flowstep"] == 1:
-            tempStorage["selecteddisp"] = 2
+        if self.flowstep == 1:
+            self.selecteddevice = 2
             return await self.async_step_portselect(user_input)
-        if tempStorage["flowstep"] == 2:
-            tempStorage["selectedport"] = 3
+        if self.flowstep == 2:
+            self.selectedport = 3
             return await self.async_step_sensorselect(user_input)
-        if tempStorage["flowstep"] == 3:
-            tempStorage["selectedsensor"] = 2
+        if self.flowstep == 3:
+            self.selectedsensor = self.sensorpage * 4 + 2
             return await self.async_step_configend()
         return await self.async_step_option3(user_input)
 
     async def async_step_option4(self, user_input: dict) -> FlowResult:
         """Unification of the device configuration menu options."""
-        tempStorage = self.hass.data[DOMAIN]
-        if tempStorage["flowstep"] == 1:
-            tempStorage["selecteddisp"] = 3
+        if self.flowstep == 1:
+            self.selecteddevice = 3
             return await self.async_step_portselect(user_input)
-        if tempStorage["flowstep"] == 2:
-            tempStorage["selectedport"] = 4
+        if self.flowstep == 2:
+            self.selectedport = 4
             return await self.async_step_sensorselect(user_input)
-        if tempStorage["flowstep"] == 3:
-            tempStorage["selectedsensor"] = 3
+        if self.flowstep == 3:
+            self.selectedsensor = self.sensorpage * 4 + 3
             return await self.async_step_configend()
         return await self.async_step_option4(user_input)
 
     async def async_step_option5(self, user_input: dict) -> FlowResult:
         """Unification of the device configuration menu options."""
-        tempStorage = self.hass.data[DOMAIN]
-        if tempStorage["flowstep"] == 1:
-            tempStorage["disppage"] = tempStorage["disppage"] + 1
+        if self.flowstep == 1:
+            self.devicepage = self.devicepage + 1
             return await self.async_step_dispselect(user_input)
-        if tempStorage["flowstep"] == 2:
-            tempStorage["selectedport"] = 5
+        if self.flowstep == 2:
+            self.selectedport = 5
             return await self.async_step_sensorselect(user_input)
-        if tempStorage["flowstep"] == 3:
-            tempStorage["sensorpage"] = tempStorage["sensorpage"] + 1
+        if self.flowstep == 3:
+            self.sensorpage = self.sensorpage + 1
             return await self.async_step_sensorselect(user_input)
         return await self.async_step_option5(user_input)
 
     async def async_step_portselect(self, user_input) -> FlowResult:
         """Set up second step."""
-        self.hass.data[DOMAIN]["flowstep"] = 2
+        self.flowstep = 2
         return self.async_show_menu(
-            step_id="dispselect",
+            step_id="portselect",
             menu_options={
-                "option1": "Porta 1",
-                "option2": "Porta 2",
-                "option3": "Porta 3",
-                "option4": "Porta 4",
-                # "option5": "Gateway",
+                "option1": "Port 1",
+                "option2": "Port 2",
+                "option3": "Port 3",
+                "option4": "Port 4",
             },
         )
 
     async def async_step_sensorselect(self, user_input) -> FlowResult:
         """Sensor Selection."""
-        self.hass.data[DOMAIN]["flowstep"] = 3
+        self.flowstep = 3
         return self.async_show_menu(
             step_id="sensorselect",
             menu_options=get_sensors(
-                self.hass,
-                self.hass.data[DOMAIN]["selecteddisp"],
-                self.hass.data[DOMAIN]["selectedport"],
-                self.hass.data[DOMAIN]["sensorpage"],
+                self.api,
+                self.selecteddevice,
+                self.selectedport,
+                self.sensorpage,
             ),
         )
 
     async def async_step_configend(self) -> FlowResult:
         """Set up user_input and create entry."""
         user_input = {}
-        stg = self.hass.data[DOMAIN]
 
-        api = stg["bzuapi"]
-        chipid = api.get_device_names()[int(stg["selecteddisp"])]
+        api = self.api
+        chipid = api.get_device_names()[int(self.selecteddevice)]
         user_input[CONF_CHIPID] = chipid
-        user_input[CONF_SENSORPORT] = stg["selectedport"]
-        user_input[CONF_EMAIL] = stg[CONF_EMAIL]
-        user_input[CONF_PASSWORD] = stg[CONF_PASSWORD]
-        user_input[CONF_SENSORNAME] = api.dispositivos[
-            user_input[CONF_CHIPID]
-        ].get_sensor_names_on(str(user_input[CONF_SENSORPORT]))[stg["selectedsensor"]]
+        user_input[CONF_SENSORPORT] = self.selectedport
+        user_input[CONF_EMAIL] = self.email
+        user_input[CONF_PASSWORD] = self.password
+        user_input[CONF_SENSORNAME] = api.dispositivos[chipid].get_sensor_names_on(
+            str(user_input[CONF_SENSORPORT])
+        )[self.selectedsensor]
+
         return self.async_create_entry(title=user_input[CONF_CHIPID], data=user_input)
 
 

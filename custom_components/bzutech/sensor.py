@@ -1,9 +1,15 @@
 """Sensor for BZUTech integration."""
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta  # noqa: D100
 from decimal import Decimal
 import logging
 
-from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
+from homeassistant.components.sensor import (
+    SensorDeviceClass,
+    SensorEntity,
+    SensorEntityDescription,
+    SensorStateClass,
+)
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     CONCENTRATION_MICROGRAMS_PER_CUBIC_METER,
@@ -14,6 +20,7 @@ from homeassistant.const import (
     UnitOfElectricCurrent,
     UnitOfElectricPotential,
     UnitOfInformation,
+    UnitOfSoundPressure,
     UnitOfTemperature,
     UnitOfTime,
 )
@@ -30,6 +37,213 @@ from . import BzuCloudCoordinator
 from .const import CONF_CHIPID, DOMAIN
 
 
+@dataclass(frozen=True)
+class BzuSensorEntityDescription(SensorEntityDescription):
+    """Describe bzu sensor entity."""
+
+
+SENSOR_TYPE: tuple[BzuSensorEntityDescription, ...] = (
+    BzuSensorEntityDescription(
+        key="TMP",
+        device_class=SensorDeviceClass.TEMPERATURE,
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    BzuSensorEntityDescription(
+        key="HUM",
+        device_class=SensorDeviceClass.HUMIDITY,
+        native_unit_of_measurement=PERCENTAGE,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    BzuSensorEntityDescription(
+        key="VOT",
+        device_class=SensorDeviceClass.VOLTAGE,
+        native_unit_of_measurement=UnitOfElectricPotential.VOLT,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    BzuSensorEntityDescription(
+        key="CO2",
+        device_class=SensorDeviceClass.CO2,
+        native_unit_of_measurement=CONCENTRATION_PARTS_PER_MILLION,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    BzuSensorEntityDescription(
+        key="CUR",
+        device_class=SensorDeviceClass.CURRENT,
+        native_unit_of_measurement=UnitOfElectricCurrent.AMPERE,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    BzuSensorEntityDescription(
+        key="LUM",
+        device_class=SensorDeviceClass.ILLUMINANCE,
+        native_unit_of_measurement=LIGHT_LUX,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    BzuSensorEntityDescription(
+        key="PIR",
+        device_class=SensorDeviceClass.AQI,
+        native_unit_of_measurement=None,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    BzuSensorEntityDescription(
+        key="DOOR",
+        device_class=SensorDeviceClass.AQI,
+        native_unit_of_measurement=None,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    BzuSensorEntityDescription(
+        key="DOR",
+        device_class=SensorDeviceClass.AQI,
+        native_unit_of_measurement=None,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    BzuSensorEntityDescription(
+        key="M10",
+        device_class=SensorDeviceClass.PM10,
+        native_unit_of_measurement=CONCENTRATION_MICROGRAMS_PER_CUBIC_METER,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    BzuSensorEntityDescription(
+        key="M25",
+        device_class=SensorDeviceClass.PM25,
+        native_unit_of_measurement=CONCENTRATION_MICROGRAMS_PER_CUBIC_METER,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    BzuSensorEntityDescription(
+        key="M40",
+        device_class=SensorDeviceClass.PM10,
+        native_unit_of_measurement=CONCENTRATION_MICROGRAMS_PER_CUBIC_METER,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    BzuSensorEntityDescription(
+        key="SND",
+        device_class=SensorDeviceClass.SOUND_PRESSURE,
+        native_unit_of_measurement=UnitOfSoundPressure.DECIBEL,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    BzuSensorEntityDescription(
+        key="M01",
+        device_class=SensorDeviceClass.PM1,
+        native_unit_of_measurement=CONCENTRATION_PARTS_PER_MILLION,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    BzuSensorEntityDescription(
+        key="C01",
+        device_class=SensorDeviceClass.CO,
+        native_unit_of_measurement=CONCENTRATION_PARTS_PER_MILLION,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    BzuSensorEntityDescription(
+        key="VOC",
+        device_class=SensorDeviceClass.VOLATILE_ORGANIC_COMPOUNDS_PARTS,
+        native_unit_of_measurement=CONCENTRATION_PARTS_PER_MILLION,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    BzuSensorEntityDescription(
+        key="DOS",
+        device_class=SensorDeviceClass.AQI,
+        native_unit_of_measurement=None,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    BzuSensorEntityDescription(
+        key="VOA",
+        device_class=SensorDeviceClass.VOLTAGE,
+        native_unit_of_measurement=UnitOfElectricPotential.VOLT,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    BzuSensorEntityDescription(
+        key="VOB",
+        device_class=SensorDeviceClass.VOLTAGE,
+        native_unit_of_measurement=UnitOfElectricPotential.VOLT,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    BzuSensorEntityDescription(
+        key="CRA",
+        device_class=SensorDeviceClass.CURRENT,
+        native_unit_of_measurement=UnitOfElectricCurrent.AMPERE,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    BzuSensorEntityDescription(
+        key="CRB",
+        device_class=SensorDeviceClass.CURRENT,
+        native_unit_of_measurement=UnitOfElectricCurrent.AMPERE,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    BzuSensorEntityDescription(
+        key="CRC",
+        device_class=SensorDeviceClass.CURRENT,
+        native_unit_of_measurement=UnitOfElectricCurrent.AMPERE,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    BzuSensorEntityDescription(
+        key="VRA",
+        device_class=SensorDeviceClass.VOLTAGE,
+        native_unit_of_measurement=UnitOfElectricPotential.VOLT,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    BzuSensorEntityDescription(
+        key="VRB",
+        device_class=SensorDeviceClass.VOLTAGE,
+        native_unit_of_measurement=UnitOfElectricPotential.VOLT,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    BzuSensorEntityDescription(
+        key="VRC",
+        device_class=SensorDeviceClass.VOLTAGE,
+        native_unit_of_measurement=UnitOfElectricPotential.VOLT,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    BzuSensorEntityDescription(
+        key="C05",
+        device_class=SensorDeviceClass.AQI,
+        native_unit_of_measurement=None,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    BzuSensorEntityDescription(
+        key="C25",
+        device_class=SensorDeviceClass.PM25,
+        native_unit_of_measurement=CONCENTRATION_MICROGRAMS_PER_CUBIC_METER,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    BzuSensorEntityDescription(
+        key="C40",
+        device_class=SensorDeviceClass.PM10,
+        native_unit_of_measurement=CONCENTRATION_MICROGRAMS_PER_CUBIC_METER,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    BzuSensorEntityDescription(
+        key="C10",
+        device_class=SensorDeviceClass.PM10,
+        native_unit_of_measurement=CONCENTRATION_MICROGRAMS_PER_CUBIC_METER,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    BzuSensorEntityDescription(
+        key="BAT",
+        device_class=SensorDeviceClass.BATTERY,
+        native_unit_of_measurement=PERCENTAGE,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    BzuSensorEntityDescription(
+        key="DBM",
+        device_class=SensorDeviceClass.SIGNAL_STRENGTH,
+        native_unit_of_measurement=SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    BzuSensorEntityDescription(
+        key="MEM",
+        device_class=SensorDeviceClass.DATA_SIZE,
+        native_unit_of_measurement=UnitOfInformation.KILOBYTES,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    BzuSensorEntityDescription(
+        key="UPT",
+        device_class=SensorDeviceClass.DURATION,
+        native_unit_of_measurement=UnitOfTime.MILLISECONDS,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+)
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
@@ -37,80 +251,22 @@ async def async_setup_entry(
 ) -> None:
     """Do entry Setup."""
     coordinator: BzuCloudCoordinator = hass.data[DOMAIN][entry.entry_id]
-    sensors = [BzuEntity(coordinator, entry)]
+    sensors = []
+    for description in SENSOR_TYPE:
+        if description.key == entry.data["sensorname"].split("-")[1]:
+            if entry.data["sensorname"].split("-")[0] == "ADS7878":
+                edgecase = BzuSensorEntityDescription(
+                    key="VOC",
+                    device_class=SensorDeviceClass.VOLTAGE,
+                    native_unit_of_measurement=UnitOfElectricPotential.VOLT,
+                    state_class=SensorStateClass.MEASUREMENT,
+                )
+                sensors.append(BzuEntity(coordinator, entry, edgecase))
+
+            else:
+                sensors.append(BzuEntity(coordinator, entry, description=description))
+
     async_add_entities(sensors, update_before_add=True)
-
-
-tipos_sensores = {
-    "TMP": SensorDeviceClass.TEMPERATURE,
-    "HUM": SensorDeviceClass.HUMIDITY,
-    "VOT": SensorDeviceClass.VOLTAGE,
-    "CO2": SensorDeviceClass.CO2,
-    "CUR": SensorDeviceClass.CURRENT,
-    "LUM": SensorDeviceClass.ILLUMINANCE,
-    "PIR": SensorDeviceClass.AQI,
-    "DOOR": SensorDeviceClass.AQI,
-    "DOR": SensorDeviceClass.AQI,
-    "M10": SensorDeviceClass.PM10,
-    "M25": SensorDeviceClass.PM25,
-    "M40": SensorDeviceClass.PM10,
-    "SND": SensorDeviceClass.SOUND_PRESSURE,
-    "M01": SensorDeviceClass.PM1,
-    "C01": SensorDeviceClass.CO,
-    "VOC": SensorDeviceClass.VOLATILE_ORGANIC_COMPOUNDS_PARTS,
-    "DOS": SensorDeviceClass.AQI,
-    "VOA": SensorDeviceClass.VOLTAGE,
-    "VOB": SensorDeviceClass.VOLTAGE,
-    "CRA": SensorDeviceClass.CURRENT,
-    "CRB": SensorDeviceClass.CURRENT,
-    "CRC": SensorDeviceClass.CURRENT,
-    "VRA": SensorDeviceClass.VOLTAGE,
-    "VRB": SensorDeviceClass.VOLTAGE,
-    "VRC": SensorDeviceClass.VOLTAGE,
-    "C05": SensorDeviceClass.AQI,
-    "C25": SensorDeviceClass.PM25,
-    "C40": SensorDeviceClass.PM10,
-    "C10": SensorDeviceClass.PM10,
-    "BAT": SensorDeviceClass.BATTERY,
-    "DBM": SensorDeviceClass.SIGNAL_STRENGTH,
-    "MEM": SensorDeviceClass.DATA_SIZE,
-    "UPT": SensorDeviceClass.DATA_SIZE,
-}
-units = {
-    "TMP": UnitOfTemperature.CELSIUS,
-    "HUM": PERCENTAGE,
-    "VOT": UnitOfElectricPotential.VOLT,
-    "CO2": CONCENTRATION_PARTS_PER_MILLION,
-    "CUR": UnitOfElectricCurrent.AMPERE,
-    "LUM": LIGHT_LUX,
-    "PIR": None,
-    "DOOR": None,
-    "DOR": None,
-    "M10": CONCENTRATION_MICROGRAMS_PER_CUBIC_METER,
-    "M25": CONCENTRATION_MICROGRAMS_PER_CUBIC_METER,
-    "M40": CONCENTRATION_MICROGRAMS_PER_CUBIC_METER,
-    "SND": SensorDeviceClass.SOUND_PRESSURE,
-    "M01": CONCENTRATION_PARTS_PER_MILLION,
-    "C01": CONCENTRATION_PARTS_PER_MILLION,
-    "VOC": CONCENTRATION_PARTS_PER_MILLION,
-    "DOS": None,
-    "VOA": UnitOfElectricPotential.VOLT,
-    "VOB": UnitOfElectricPotential.VOLT,
-    "CRA": UnitOfElectricCurrent.AMPERE,
-    "CRB": UnitOfElectricCurrent.AMPERE,
-    "CRC": UnitOfElectricCurrent.AMPERE,
-    "VRA": UnitOfElectricPotential.VOLT,
-    "VRB": UnitOfElectricPotential.VOLT,
-    "VRC": UnitOfElectricPotential.VOLT,
-    "C05": None,
-    "C25": CONCENTRATION_MICROGRAMS_PER_CUBIC_METER,
-    "C40": CONCENTRATION_MICROGRAMS_PER_CUBIC_METER,
-    "C10": CONCENTRATION_MICROGRAMS_PER_CUBIC_METER,
-    "BAT": PERCENTAGE,
-    "DBM": SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
-    "MEM": UnitOfInformation.KIBIBYTES,
-    "UPT": UnitOfTime.MILLISECONDS,
-}
 
 
 class BzuCoordinator(DataUpdateCoordinator):
@@ -136,7 +292,9 @@ class BzuCoordinator(DataUpdateCoordinator):
 class BzuEntity(CoordinatorEntity, SensorEntity):
     """Setup sensor entity."""
 
-    def __init__(self, coordinator, entry: ConfigEntry) -> None:
+    def __init__(
+        self, coordinator, entry: ConfigEntry, description: BzuSensorEntityDescription
+    ) -> None:
         """Do Sensor configuration."""
         super().__init__(coordinator)
         self._attr_name = (
@@ -147,13 +305,7 @@ class BzuEntity(CoordinatorEntity, SensorEntity):
             + str(entry.data["sensorport"])
         )
         self.chipid = entry.data[CONF_CHIPID]
-        self._attr_state_class = "measurement"
-        self._attr_device_class = SensorDeviceClass(
-            tipos_sensores[entry.data["sensorname"].split("-")[1]]
-        )
-        self._attr_native_unit_of_measurement = units[
-            entry.data["sensorname"].split("-")[1]
-        ]
+        self.entity_description = description
         self._attr_unique_id = self._attr_name
         self._attr_is_on = True
 
@@ -171,10 +323,9 @@ class BzuEntity(CoordinatorEntity, SensorEntity):
             serial_number=self.chipid,
             sw_version="1.0",
         )
-        # return super().device_info
 
     @property
     def native_value(self) -> StateType | date | datetime | Decimal:
         """Return sensor value."""
-        self._attr_native_value = self.coordinator.fetch_data()
+        self._attr_native_value = self.coordinator.data
         return super().native_value
