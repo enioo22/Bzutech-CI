@@ -9,5 +9,6 @@
   "iot_class": "cloud_push",
   "requirements": ["bzutech==1.0.11"],
   "ssdp": [],
-  "zeroconf": []
+  "zeroconf": [],
+  "version": "1.0.0"
 }
