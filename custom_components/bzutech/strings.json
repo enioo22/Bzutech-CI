@@ -3,8 +3,7 @@
     "step": {
       "user": {
         "data": {
-          "host": "[%key:common::config_flow::data::host%]",
-          "username": "[%key:common::config_flow::data::username%]",
+          "email": "[%key:common::config_flow::data::email%]",
           "password": "[%key:common::config_flow::data::password%]"
         }
       }
@@ -16,6 +15,67 @@
     },
     "abort": {
       "already_configured": "[%key:common::config_flow::abort::already_configured_device%]"
+    }
+  },
+  "entity": {
+    "sensor": {
+      "temperature": {
+        "name": "Temperature sensor"
+      },
+      "humidity": {
+        "name": "Humidity sensor"
+      },
+      "voltage": {
+        "name": "Voltage sensor"
+      },
+      "co2": {
+        "name": "CO2 sensor"
+      },
+      "current": {
+        "name": "Current sensor"
+      },
+      "luminosity": {
+        "name": "Luminosity sensor"
+      },
+      "door": {
+        "name": "Door sensor"
+      },
+      "pm10": {
+        "name": "Air Quality PM10 sensor"
+      },
+      "pm25": {
+        "name": "Air Quality PM2.5 sensor"
+      },
+      "pm40": {
+        "name": "Air Quality PM4 sensor"
+      },
+      "sound": {
+        "name": "Sound sensor"
+      },
+      "pm01": {
+        "name": "Air Quality PM1 sensor"
+      },
+      "co1": {
+        "name": "Carbon monoxide sensor"
+      },
+      "volatileoc": {
+        "name": "Volatile Organic Compounds sensor"
+      },
+      "pm05": {
+        "name": "Air Quality PM0.5 sensor"
+      },
+      "battery": {
+        "name": "Batery sensor"
+      },
+      "dbm": {
+        "name": "DBm sensor"
+      },
+      "memory": {
+        "name": "Memory sensor"
+      },
+      "uptime": {
+        "name": "Uptime sensor"
+      }
     }
   }
 }

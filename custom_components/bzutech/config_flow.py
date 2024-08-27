@@ -1,89 +1,100 @@
 """Config flow for BZUTech integration."""
+
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 from bzutech import BzuTech
 import voluptuous as vol
 
 from homeassistant import config_entries
+from homeassistant.components import mqtt
+from homeassistant.config_entries import ConfigFlowResult
 from homeassistant.const import CONF_EMAIL, CONF_PASSWORD
 from homeassistant.core import HomeAssistant
-from homeassistant.data_entry_flow import FlowResult
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers.selector import (
+    SelectOptionDict,
+    SelectSelector,
+    SelectSelectorConfig,
+    SelectSelectorMode,
+)
 
-from .const import CONF_CHIPID, CONF_SENSORNAME, CONF_SENSORPORT, DOMAIN
+from .const import (
+    CONF_CHIPID,
+    CONF_ENDPOINT,
+    CONF_ENTITY,
+    CONF_SENSORNAME,
+    CONF_SENSORPORT,
+    CONF_TYPE,
+    DOMAIN,
+)
+
+sensortypes = {
+    "temperature": "TMP",
+    "humidity": "HUM",
+    "battery": "BAT",
+    "voltage": "VOT",
+    "carbon_monoxide": "CO1",
+    "carbon_dioxide": "CO2",
+    "current": "CUR",
+    "illuminance": "LUX",
+    "pm1": "P01",
+    "pm10": "P10",
+    "pm25": "P25",
+    "signal_strength": "DBM",
+    "aqi": "DOR",
+}
+
 
 _LOGGER = logging.getLogger(__name__)
 
 STEP_USER_LOGIN_SCHEMA = vol.Schema(
     {
-        vol.Required(CONF_EMAIL, default=CONF_EMAIL): str,
+        vol.Required(CONF_EMAIL): str,
         vol.Required(CONF_PASSWORD): str,
     },
     True,
 )
 
 
-async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> BzuTech:
+async def get_api(hass: HomeAssistant, data: dict[str, Any]) -> BzuTech:
     """Validate the user input allows us to connect."""
-    hass.data[DOMAIN] = {}
     api = BzuTech(data[CONF_EMAIL], data[CONF_PASSWORD])
 
-    if not await api.start():
-        raise InvalidAuth
+    await api.start()
 
     return api
 
 
-def get_devices(api: BzuTech, page: int) -> dict[str, Any]:
-    """Get device names on a dict for the showmenu."""
-
-    devices = {}
-    i = 1
-    first = page * 4
-    last = first + 3
-    counter = 0
-
-    for key in list(api.dispositivos.keys()):
-        if first <= counter <= last:
-            returnkey = "option" + str(i)
-            devices[returnkey] = key
-            i = i + 1
-
-        counter = counter + 1
-    if len(list(api.dispositivos.keys())) > (page + 1) * 4:
-        devices["option5"] = "Mais dispositivos"
-    return devices
+def get_ports(api: BzuTech, chipid: str) -> list[str]:
+    """Get ports with the endpoints connected to each port."""
+    return [f"Port {i} {api.get_endpoint_on(chipid, i)}" for i in range(1, 5)]
 
 
-def get_sensors(
-    api: BzuTech, devicepos: int, sensorport: int, page: int
-) -> dict[str, Any]:
-    """Get sensor names from a device on a dict for the showmenu."""
+def get_entities(hass: HomeAssistant) -> dict[str, str]:
+    """Get every entity name to send them to bzucloud."""
 
-    sensors = {}
-    first = page * 4
-    last = first + 3
-    counter = 0
-    chipid = list(api.dispositivos.keys())[devicepos]
-    numSensors = len(
-        list(api.dispositivos[chipid].get_sensor_names_on(str(sensorport)))
-    )
+    entityList = [
+        x
+        for x in hass.states.async_entity_ids(["sensor"])
+        if hass.states.get(x).as_dict()["attributes"]["device_class"] != "timestamp"
+        and hass.states.get(x).name
+    ]
+    entityList.insert(0, "Add all")
+    return entityList
 
-    i = 1
 
-    for name in list(api.dispositivos[chipid].get_sensor_names_on(str(sensorport))):
-        if first <= counter <= last:
-            sensors["option" + str(i)] = name
-            i = i + 1
-        counter = counter + 1
+def get_sensortype(hass: HomeAssistant, entity: str):
+    """Get the sensor type to be send."""
+    return sensortypes[hass.states.get(entity).as_dict()["attributes"]["device_class"]]
 
-    if numSensors > 4 * (page + 1):
-        sensors["option5"] = "More sensors"
 
-    return sensors
+def get_sensornumber(hass: HomeAssistant):
+    """Get the number of the sensor to be send."""
+    return str(hass.states.async_entity_ids_count("binary_sensor") + 1)
 
 
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -93,32 +104,31 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     api: BzuTech
     email = ""
     password = ""
-    devicepage = 0
-    sensorpage = 0
-    flowstep = 0
+    actual = 0
     selecteddevice = 0
+    selectedtype = 0
+    selectedentity = ""
     selectedport = 0
-    selectedsensor = 0
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
+    ) -> ConfigFlowResult:
         """Handle the initial step."""
         errors: dict[str, str] = {}
         if user_input is not None:
             try:
-                self.api = await validate_input(self.hass, user_input)
-            except CannotConnect:
-                errors["base"] = "cannot_connect"
-            except InvalidAuth:
-                errors["base"] = "invalid_auth"
+                self.api = await get_api(self.hass, user_input)
             except Exception:  # pylint: disable=broad-except
                 _LOGGER.exception("Unexpected exception")
                 errors["base"] = "unknown"
-            else:
-                self.email = user_input[CONF_EMAIL]
-                self.password = user_input[CONF_PASSWORD]
-                return await self.async_step_dispselect(user_input=user_input)
+                return self.async_abort(reason=errors["base"])
+            self.email = user_input[CONF_EMAIL]
+            self.password = user_input[CONF_PASSWORD]
+            if not self.hass.states.get(
+                "binary_sensor.ha_sendall"
+            ) and await mqtt.async_wait_for_mqtt_client(self.hass):
+                return await self.async_step_typeselect(user_input=user_input)
+            return await self.async_step_deviceselect(user_input)
         return self.async_show_form(
             step_id="user",
             data_schema=STEP_USER_LOGIN_SCHEMA,
@@ -126,122 +136,139 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             last_step=False,
         )
 
-    async def async_step_dispselect(
+    async def async_step_addentities(
         self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
-        """Set up second step."""
-        self.flowstep = 1
-        return self.async_show_menu(
-            step_id="dispselect",
-            menu_options=get_devices(self.api, self.devicepage),
-        )
+    ) -> ConfigFlowResult:
+        """Select entities to be send."""
+        if CONF_ENTITY in user_input:
+            user_input = {
+                CONF_PASSWORD: self.password,
+                CONF_TYPE: self.selectedtype,
+                CONF_EMAIL: self.email,
+                CONF_ENTITY: user_input[CONF_ENTITY],
+                "todos": 0,
+                CONF_CHIPID: f"HA-{re.sub("[a-zA-z]", "", self.hass.data["core.uuid"][-7:])}",
+                CONF_SENSORNAME: f"HA-GEN-{get_sensornumber(self.hass)}",
+            }
+            if (
+                user_input[CONF_ENTITY] == "Add all"
+                or user_input[CONF_ENTITY] == "Add every device"
+            ):
+                # user_input[CONF_ENTITY] = get_entities(self.hass)
+                user_input["todos"] = 1
+                user_input[CONF_SENSORNAME] = "HA-SENDALL"
+            return self.async_create_entry(
+                title=user_input[CONF_CHIPID],
+                data=user_input,
+            )
 
-    async def async_step_option1(self, user_input: dict) -> FlowResult:
-        """Unification of the device configuration."""
-        if self.flowstep == 1:
-            self.selecteddevice = 0
-            return await self.async_step_portselect(user_input)
-        if self.flowstep == 2:
-            self.selectedport = 1
-            return await self.async_step_sensorselect(user_input)
-        if self.flowstep == 3:
-            self.selectedsensor = self.sensorpage * 4 + 0
-            return await self.async_step_configend()
-        return await self.async_step_option1(user_input)
-
-    async def async_step_option2(self, user_input: dict) -> FlowResult:
-        """Unification of the device configuration menu options."""
-        if self.flowstep == 1:
-            self.selecteddevice = 1
-            return await self.async_step_portselect(user_input)
-        if self.flowstep == 2:
-            self.selectedport = 2
-            return await self.async_step_sensorselect(user_input)
-        if self.flowstep == 3:
-            self.selectedsensor = self.sensorpage * 4 + 1
-            return await self.async_step_configend()
-        return await self.async_step_option2(user_input)
-
-    async def async_step_option3(self, user_input: dict) -> FlowResult:
-        """Unification of the device configuration menu options."""
-        if self.flowstep == 1:
-            self.selecteddevice = 2
-            return await self.async_step_portselect(user_input)
-        if self.flowstep == 2:
-            self.selectedport = 3
-            return await self.async_step_sensorselect(user_input)
-        if self.flowstep == 3:
-            self.selectedsensor = self.sensorpage * 4 + 2
-            return await self.async_step_configend()
-        return await self.async_step_option3(user_input)
-
-    async def async_step_option4(self, user_input: dict) -> FlowResult:
-        """Unification of the device configuration menu options."""
-        if self.flowstep == 1:
-            self.selecteddevice = 3
-            return await self.async_step_portselect(user_input)
-        if self.flowstep == 2:
-            self.selectedport = 4
-            return await self.async_step_sensorselect(user_input)
-        if self.flowstep == 3:
-            self.selectedsensor = self.sensorpage * 4 + 3
-            return await self.async_step_configend()
-        return await self.async_step_option4(user_input)
-
-    async def async_step_option5(self, user_input: dict) -> FlowResult:
-        """Unification of the device configuration menu options."""
-        if self.flowstep == 1:
-            self.devicepage = self.devicepage + 1
-            return await self.async_step_dispselect(user_input)
-        if self.flowstep == 2:
-            self.selectedport = 5
-            return await self.async_step_sensorselect(user_input)
-        if self.flowstep == 3:
-            self.sensorpage = self.sensorpage + 1
-            return await self.async_step_sensorselect(user_input)
-        return await self.async_step_option5(user_input)
-
-    async def async_step_portselect(self, user_input) -> FlowResult:
-        """Set up second step."""
-        self.flowstep = 2
-        return self.async_show_menu(
-            step_id="portselect",
-            menu_options={
-                "option1": "Port 1",
-                "option2": "Port 2",
-                "option3": "Port 3",
-                "option4": "Port 4",
-            },
-        )
-
-    async def async_step_sensorselect(self, user_input) -> FlowResult:
-        """Sensor Selection."""
-        self.flowstep = 3
-        return self.async_show_menu(
-            step_id="sensorselect",
-            menu_options=get_sensors(
-                self.api,
-                self.selecteddevice,
-                self.selectedport,
-                self.sensorpage,
+        return self.async_show_form(
+            step_id="addentities",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        CONF_ENTITY,
+                    ): SelectSelector(
+                        SelectSelectorConfig(
+                            options=[
+                                SelectOptionDict(value=key, label=key)
+                                for key in get_entities(self.hass)
+                            ],
+                            mode=SelectSelectorMode.DROPDOWN,
+                        )
+                    ),
+                }
             ),
         )
 
-    async def async_step_configend(self) -> FlowResult:
-        """Set up user_input and create entry."""
-        user_input = {}
+    async def async_step_typeselect(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        "Select if data will be gotten or sent."
+        if CONF_TYPE in user_input:
+            self.selectedtype = user_input[CONF_TYPE]
+            if self.selectedtype == "0":
+                return await self.async_step_deviceselect(user_input=user_input)
+            return await self.async_step_addentities(user_input=user_input)
 
-        api = self.api
-        chipid = api.get_device_names()[int(self.selecteddevice)]
-        user_input[CONF_CHIPID] = chipid
-        user_input[CONF_SENSORPORT] = self.selectedport
-        user_input[CONF_EMAIL] = self.email
-        user_input[CONF_PASSWORD] = self.password
-        user_input[CONF_SENSORNAME] = api.dispositivos[chipid].get_sensor_names_on(
-            str(user_input[CONF_SENSORPORT])
-        )[self.selectedsensor]
+        return self.async_show_form(
+            step_id="typeselect",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_TYPE): SelectSelector(
+                        SelectSelectorConfig(
+                            options=[
+                                SelectOptionDict(value="1", label="Send data to Bzu"),
+                                SelectOptionDict(
+                                    value="0",
+                                    label="Receive data from Bzu",
+                                ),
+                            ],
+                            mode=SelectSelectorMode.LIST,
+                        )
+                    )
+                }
+            ),
+        )
 
-        return self.async_create_entry(title=user_input[CONF_CHIPID], data=user_input)
+    async def async_step_deviceselect(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Set up the selection of the device from a list ."""
+        if self.selecteddevice != 0 and user_input is not None:
+            self.selecteddevice = user_input[CONF_CHIPID]
+            return await self.async_step_portselect(user_input=user_input)
+        self.selecteddevice = 1
+        return self.async_show_form(
+            step_id="deviceselect",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_CHIPID): SelectSelector(
+                        SelectSelectorConfig(
+                            options=[
+                                SelectOptionDict(value=key, label=key)
+                                for key in self.api.get_device_names()
+                            ],
+                            mode=SelectSelectorMode.DROPDOWN,
+                        )
+                    ),
+                }
+            ),
+        )
+
+    async def async_step_portselect(self, user_input) -> ConfigFlowResult:
+        """Set up the device port selection."""
+        if self.selectedport != 0:
+            user_input = {
+                CONF_ENDPOINT: user_input[CONF_SENSORPORT].split(" ")[2],
+                CONF_SENSORPORT: user_input[CONF_SENSORPORT][5],
+                CONF_PASSWORD: self.password,
+                CONF_TYPE: self.selectedtype,
+                CONF_EMAIL: self.email,
+                CONF_CHIPID: self.selecteddevice,
+            }
+            return self.async_create_entry(
+                title=f"BZUGW-{self.selecteddevice}-{user_input[CONF_SENSORPORT]}",
+                data=user_input,
+            )
+
+        self.selectedport = 1
+        return self.async_show_form(
+            step_id="portselect",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_SENSORPORT): SelectSelector(
+                        SelectSelectorConfig(
+                            options=[
+                                SelectOptionDict(value=k, label=k)
+                                for k in get_ports(self.api, user_input[CONF_CHIPID])
+                            ],
+                            mode=SelectSelectorMode.LIST,
+                        )
+                    ),
+                }
+            ),
+        )
 
 
 class CannotConnect(HomeAssistantError):

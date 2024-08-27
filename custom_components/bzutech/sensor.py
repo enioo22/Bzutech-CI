@@ -1,8 +1,8 @@
 """Sensor for BZUTech integration."""
-from dataclasses import dataclass
-from datetime import date, datetime, timedelta  # noqa: D100
-from decimal import Decimal
-import logging
+
+from datetime import timedelta
+
+from bzutech import BzuTech
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -27,221 +27,256 @@ from homeassistant.const import (
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.typing import StateType
-from homeassistant.helpers.update_coordinator import (
-    CoordinatorEntity,
-    DataUpdateCoordinator,
-)
+from homeassistant.helpers.update_coordinator import UpdateFailed
 
-from . import BzuCloudCoordinator
-from .const import CONF_CHIPID, DOMAIN
+from .const import CONF_CHIPID, CONF_ENDPOINT, CONF_SENSORPORT, DOMAIN
 
+SCAN_INTERVAL = timedelta(minutes=5)
 
-@dataclass(frozen=True)
-class BzuSensorEntityDescription(SensorEntityDescription):
-    """Describe bzu sensor entity."""
-
-
-SENSOR_TYPE: tuple[BzuSensorEntityDescription, ...] = (
-    BzuSensorEntityDescription(
+SENSOR_TYPE: tuple[SensorEntityDescription, ...] = (
+    SensorEntityDescription(
         key="TMP",
         device_class=SensorDeviceClass.TEMPERATURE,
         native_unit_of_measurement=UnitOfTemperature.CELSIUS,
         state_class=SensorStateClass.MEASUREMENT,
     ),
-    BzuSensorEntityDescription(
+    SensorEntityDescription(
         key="HUM",
         device_class=SensorDeviceClass.HUMIDITY,
         native_unit_of_measurement=PERCENTAGE,
         state_class=SensorStateClass.MEASUREMENT,
     ),
-    BzuSensorEntityDescription(
+    SensorEntityDescription(
         key="VOT",
         device_class=SensorDeviceClass.VOLTAGE,
         native_unit_of_measurement=UnitOfElectricPotential.VOLT,
         state_class=SensorStateClass.MEASUREMENT,
     ),
-    BzuSensorEntityDescription(
+    SensorEntityDescription(
         key="CO2",
         device_class=SensorDeviceClass.CO2,
         native_unit_of_measurement=CONCENTRATION_PARTS_PER_MILLION,
         state_class=SensorStateClass.MEASUREMENT,
     ),
-    BzuSensorEntityDescription(
+    SensorEntityDescription(
         key="CUR",
         device_class=SensorDeviceClass.CURRENT,
         native_unit_of_measurement=UnitOfElectricCurrent.AMPERE,
         state_class=SensorStateClass.MEASUREMENT,
     ),
-    BzuSensorEntityDescription(
+    SensorEntityDescription(
         key="LUM",
         device_class=SensorDeviceClass.ILLUMINANCE,
         native_unit_of_measurement=LIGHT_LUX,
         state_class=SensorStateClass.MEASUREMENT,
     ),
-    BzuSensorEntityDescription(
+    SensorEntityDescription(
         key="PIR",
         device_class=SensorDeviceClass.AQI,
         native_unit_of_measurement=None,
         state_class=SensorStateClass.MEASUREMENT,
     ),
-    BzuSensorEntityDescription(
+    SensorEntityDescription(
         key="DOOR",
+        translation_key="door",
         device_class=SensorDeviceClass.AQI,
         native_unit_of_measurement=None,
         state_class=SensorStateClass.MEASUREMENT,
     ),
-    BzuSensorEntityDescription(
+    SensorEntityDescription(
         key="DOR",
+        translation_key="door",
         device_class=SensorDeviceClass.AQI,
         native_unit_of_measurement=None,
         state_class=SensorStateClass.MEASUREMENT,
     ),
-    BzuSensorEntityDescription(
+    SensorEntityDescription(
         key="M10",
         device_class=SensorDeviceClass.PM10,
         native_unit_of_measurement=CONCENTRATION_MICROGRAMS_PER_CUBIC_METER,
         state_class=SensorStateClass.MEASUREMENT,
     ),
-    BzuSensorEntityDescription(
+    SensorEntityDescription(
         key="M25",
         device_class=SensorDeviceClass.PM25,
         native_unit_of_measurement=CONCENTRATION_MICROGRAMS_PER_CUBIC_METER,
         state_class=SensorStateClass.MEASUREMENT,
     ),
-    BzuSensorEntityDescription(
+    SensorEntityDescription(
         key="M40",
+        translation_key="pm40",
         device_class=SensorDeviceClass.PM10,
         native_unit_of_measurement=CONCENTRATION_MICROGRAMS_PER_CUBIC_METER,
         state_class=SensorStateClass.MEASUREMENT,
     ),
-    BzuSensorEntityDescription(
+    SensorEntityDescription(
         key="SND",
         device_class=SensorDeviceClass.SOUND_PRESSURE,
         native_unit_of_measurement=UnitOfSoundPressure.DECIBEL,
         state_class=SensorStateClass.MEASUREMENT,
     ),
-    BzuSensorEntityDescription(
+    SensorEntityDescription(
         key="M01",
         device_class=SensorDeviceClass.PM1,
-        native_unit_of_measurement=CONCENTRATION_PARTS_PER_MILLION,
+        native_unit_of_measurement=CONCENTRATION_MICROGRAMS_PER_CUBIC_METER,
         state_class=SensorStateClass.MEASUREMENT,
     ),
-    BzuSensorEntityDescription(
+    SensorEntityDescription(
         key="C01",
         device_class=SensorDeviceClass.CO,
         native_unit_of_measurement=CONCENTRATION_PARTS_PER_MILLION,
         state_class=SensorStateClass.MEASUREMENT,
     ),
-    BzuSensorEntityDescription(
+    SensorEntityDescription(
         key="VOC",
         device_class=SensorDeviceClass.VOLATILE_ORGANIC_COMPOUNDS_PARTS,
         native_unit_of_measurement=CONCENTRATION_PARTS_PER_MILLION,
         state_class=SensorStateClass.MEASUREMENT,
     ),
-    BzuSensorEntityDescription(
+    SensorEntityDescription(
         key="DOS",
+        translation_key="door",
         device_class=SensorDeviceClass.AQI,
         native_unit_of_measurement=None,
         state_class=SensorStateClass.MEASUREMENT,
     ),
-    BzuSensorEntityDescription(
+    SensorEntityDescription(
         key="VOA",
         device_class=SensorDeviceClass.VOLTAGE,
         native_unit_of_measurement=UnitOfElectricPotential.VOLT,
         state_class=SensorStateClass.MEASUREMENT,
     ),
-    BzuSensorEntityDescription(
+    SensorEntityDescription(
         key="VOB",
         device_class=SensorDeviceClass.VOLTAGE,
         native_unit_of_measurement=UnitOfElectricPotential.VOLT,
         state_class=SensorStateClass.MEASUREMENT,
     ),
-    BzuSensorEntityDescription(
+    SensorEntityDescription(
         key="CRA",
         device_class=SensorDeviceClass.CURRENT,
         native_unit_of_measurement=UnitOfElectricCurrent.AMPERE,
         state_class=SensorStateClass.MEASUREMENT,
     ),
-    BzuSensorEntityDescription(
+    SensorEntityDescription(
         key="CRB",
         device_class=SensorDeviceClass.CURRENT,
         native_unit_of_measurement=UnitOfElectricCurrent.AMPERE,
         state_class=SensorStateClass.MEASUREMENT,
     ),
-    BzuSensorEntityDescription(
+    SensorEntityDescription(
         key="CRC",
         device_class=SensorDeviceClass.CURRENT,
         native_unit_of_measurement=UnitOfElectricCurrent.AMPERE,
         state_class=SensorStateClass.MEASUREMENT,
     ),
-    BzuSensorEntityDescription(
+    SensorEntityDescription(
         key="VRA",
         device_class=SensorDeviceClass.VOLTAGE,
         native_unit_of_measurement=UnitOfElectricPotential.VOLT,
         state_class=SensorStateClass.MEASUREMENT,
     ),
-    BzuSensorEntityDescription(
+    SensorEntityDescription(
         key="VRB",
         device_class=SensorDeviceClass.VOLTAGE,
         native_unit_of_measurement=UnitOfElectricPotential.VOLT,
         state_class=SensorStateClass.MEASUREMENT,
     ),
-    BzuSensorEntityDescription(
+    SensorEntityDescription(
         key="VRC",
         device_class=SensorDeviceClass.VOLTAGE,
         native_unit_of_measurement=UnitOfElectricPotential.VOLT,
         state_class=SensorStateClass.MEASUREMENT,
     ),
-    BzuSensorEntityDescription(
+    SensorEntityDescription(
         key="C05",
-        device_class=SensorDeviceClass.AQI,
-        native_unit_of_measurement=None,
+        translation_key="pm05",
+        device_class=SensorDeviceClass.PM10,
+        native_unit_of_measurement=CONCENTRATION_MICROGRAMS_PER_CUBIC_METER,
         state_class=SensorStateClass.MEASUREMENT,
     ),
-    BzuSensorEntityDescription(
+    SensorEntityDescription(
         key="C25",
         device_class=SensorDeviceClass.PM25,
         native_unit_of_measurement=CONCENTRATION_MICROGRAMS_PER_CUBIC_METER,
         state_class=SensorStateClass.MEASUREMENT,
     ),
-    BzuSensorEntityDescription(
+    SensorEntityDescription(
         key="C40",
+        translation_key="pm40",
         device_class=SensorDeviceClass.PM10,
         native_unit_of_measurement=CONCENTRATION_MICROGRAMS_PER_CUBIC_METER,
         state_class=SensorStateClass.MEASUREMENT,
     ),
-    BzuSensorEntityDescription(
+    SensorEntityDescription(
         key="C10",
         device_class=SensorDeviceClass.PM10,
         native_unit_of_measurement=CONCENTRATION_MICROGRAMS_PER_CUBIC_METER,
         state_class=SensorStateClass.MEASUREMENT,
     ),
-    BzuSensorEntityDescription(
+    SensorEntityDescription(
         key="BAT",
         device_class=SensorDeviceClass.BATTERY,
         native_unit_of_measurement=PERCENTAGE,
         state_class=SensorStateClass.MEASUREMENT,
     ),
-    BzuSensorEntityDescription(
+    SensorEntityDescription(
         key="DBM",
         device_class=SensorDeviceClass.SIGNAL_STRENGTH,
         native_unit_of_measurement=SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
         state_class=SensorStateClass.MEASUREMENT,
     ),
-    BzuSensorEntityDescription(
+    SensorEntityDescription(
         key="MEM",
         device_class=SensorDeviceClass.DATA_SIZE,
         native_unit_of_measurement=UnitOfInformation.KILOBYTES,
         state_class=SensorStateClass.MEASUREMENT,
     ),
-    BzuSensorEntityDescription(
+    SensorEntityDescription(
         key="UPT",
         device_class=SensorDeviceClass.DURATION,
         native_unit_of_measurement=UnitOfTime.MILLISECONDS,
         state_class=SensorStateClass.MEASUREMENT,
     ),
 )
+
+ENDPOINT_SENSORS = {
+    "EP101": ["SHT20-TMP", "SHT20-HUM", "BH1750-LUM"],
+    "EP111": ["SHT20-TMP", "SHT20-HUM", "BH1750-LUM", "SHT30-TMP", "SHT30-HUM"],
+    "EP121": ["SHT20-TMP", "SHT20-HUM", "BH1750-LUM", "DOOR-DOR"],
+    "EP200": [
+        "SHT20-TMP",
+        "SHT20-HUM",
+        "SGP30-VOC",
+        "SGP30-CO2",
+        "SPS30-M01",
+        "SPS30-M25",
+        "SPS30-M40",
+        "SPS30-M10",
+    ],
+    "EP300": ["RTZSBZ-SND"],
+    "EP400": [
+        "ADS7878-VRA",
+        "ADS7878-VRB",
+        "ADS7878-VRC",
+        "ADS7878-CRA",
+        "ADS7878-CRB",
+        "ADS7878-CRC",
+        "ADS7878-CRN",
+        "ADS7878-APA",
+        "ADS7878-APB",
+        "ADS7878-APC",
+        "ADS7878-PPA",
+        "ADS7878-PPB",
+        "ADS7878-PPC",
+        "ADS7878-RPA",
+        "ADS7878-RPB",
+        "ADS7878-RPC",
+        "ADS7878-ACA",
+        "ADS7878-BCA",
+        "ADS7878-CCA",
+    ],
+}
 
 
 async def async_setup_entry(
@@ -250,82 +285,58 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Do entry Setup."""
-    coordinator: BzuCloudCoordinator = hass.data[DOMAIN][entry.entry_id]
-    sensors = []
-    for description in SENSOR_TYPE:
-        if description.key == entry.data["sensorname"].split("-")[1]:
-            if entry.data["sensorname"].split("-")[0] == "ADS7878":
-                edgecase = BzuSensorEntityDescription(
-                    key="VOC",
-                    device_class=SensorDeviceClass.VOLTAGE,
-                    native_unit_of_measurement=UnitOfElectricPotential.VOLT,
-                    state_class=SensorStateClass.MEASUREMENT,
-                )
-                sensors.append(BzuEntity(coordinator, entry, edgecase))
-
-            else:
-                sensors.append(BzuEntity(coordinator, entry, description=description))
+    bzu_api = hass.data[DOMAIN][entry.entry_id]
+    sensors = [
+        BzuSensorEntity(
+            bzu_api, f"{sensor}-{entry.data[CONF_SENSORPORT]}", entry, description
+        )
+        for sensor in ENDPOINT_SENSORS[entry.data[CONF_ENDPOINT]]
+        for description in SENSOR_TYPE
+        if description.key == sensor.split("-")[1]
+    ]
 
     async_add_entities(sensors, update_before_add=True)
 
 
-class BzuCoordinator(DataUpdateCoordinator):
-    """setup entity coordinator."""
+class BzuSensorEntity(SensorEntity):
+    """Setup sensor entity."""
+
+    has_entity_name = True
 
     def __init__(
         self,
-        hass: HomeAssistant,
-        cloudcoordinator: BzuCloudCoordinator,
-    ) -> None:
-        """Do setup coordinator."""
-
-        super().__init__(
-            hass,
-            logging.getLogger("bzutech"),
-            name="bzutech",
-            update_interval=timedelta(seconds=30),
-        )
-        self.myapi = cloudcoordinator
-        self.data = None
-
-
-class BzuEntity(CoordinatorEntity, SensorEntity):
-    """Setup sensor entity."""
-
-    def __init__(
-        self, coordinator, entry: ConfigEntry, description: BzuSensorEntityDescription
+        api: BzuTech,
+        sensorname: str,
+        entry: ConfigEntry,
+        description: SensorEntityDescription,
     ) -> None:
         """Do Sensor configuration."""
-        super().__init__(coordinator)
-        self._attr_name = (
-            str(entry.data[CONF_CHIPID])
-            + "-"
-            + entry.data["sensorname"].split("-")[1]
-            + "-"
-            + str(entry.data["sensorport"])
+        self._attr_unique_id = (
+            entry.data[CONF_CHIPID]
+            + sensorname.split("-")[1]
+            + entry.data[CONF_SENSORPORT]
         )
         self.chipid = entry.data[CONF_CHIPID]
+        self.sensorname = sensorname
+        self.name = sensorname
+        self.api: BzuTech = api
         self.entity_description = description
-        self._attr_unique_id = self._attr_name
-        self._attr_is_on = True
-
-    @property
-    def device_info(self) -> DeviceInfo | None:
-        """Setting basic device info."""
-        return DeviceInfo(
-            identifiers={(DOMAIN, "ESP-" + self.chipid)},
-            suggested_area="Room",
-            name="Gateway " + self.chipid,
+        self._attr_translation_key = description.key
+        self._attr_device_info = DeviceInfo(
+            name=f"{self.chipid}-{entry.data[CONF_SENSORPORT]}",
+            identifiers={(DOMAIN, f"ESP-{self.chipid}")},
             entry_type=DeviceEntryType("service"),
-            manufacturer="BZU Tecnologia",
-            hw_version="1.0",
-            model="ESP-" + self.chipid,
-            serial_number=self.chipid,
-            sw_version="1.0",
+            manufacturer="Bzu Tech",
+            model=f"ESP-{self.chipid}-{entry.data[CONF_SENSORPORT]}",
+            serial_number=f"{self.chipid}P{entry.data[CONF_SENSORPORT]}",
         )
 
-    @property
-    def native_value(self) -> StateType | date | datetime | Decimal:
-        """Return sensor value."""
-        self._attr_native_value = self.coordinator.data
-        return super().native_value
+    async def async_update(self) -> None:
+        """Update entity values, the bzutech webapi does not have a endpoint to get every sensor value at once, so each entity need to poll."""
+        try:
+            self._attr_native_value = await self.api.get_reading(
+                str(self.chipid), self.sensorname
+            )
+        except (KeyError, TypeError) as error:
+            await self.api.start()
+            raise UpdateFailed(error) from error

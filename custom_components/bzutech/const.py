@@ -2,6 +2,8 @@
 
 DOMAIN = "bzutech"
 CONF_CHIPID = "Chip ID"
-CONF_DISPNAME = "availabledisp"
 CONF_SENSORNAME = "sensorname"
 CONF_SENSORPORT = "sensorport"
+CONF_ENDPOINT = "endpoint"
+CONF_TYPE = "entitytype"
+CONF_ENTITY = "ENTITYID"
