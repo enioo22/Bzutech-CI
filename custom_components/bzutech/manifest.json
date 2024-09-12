@@ -4,6 +4,7 @@
   "codeowners": ["@enioo22"],
   "config_flow": true,
   "documentation": "https://www.home-assistant.io/integrations/bzutech",
+  "issue_tracker": "https://github.com/enioo22/Bzutech-CI/issues",
   "iot_class": "cloud_push",
   "requirements": ["bzutech==2.3.2"],
   "version": "1.1.0"
