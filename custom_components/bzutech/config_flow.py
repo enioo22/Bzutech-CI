@@ -63,9 +63,6 @@ STEP_USER_LOGIN_SCHEMA = vol.Schema(
 async def get_api(hass: HomeAssistant, data: dict[str, Any]) -> BzuTech:
     """Validate the user input allows us to connect."""
     api = BzuTech(data[CONF_EMAIL], data[CONF_PASSWORD])
-
-    await api.start()
-
     return api
 
 
@@ -76,6 +73,8 @@ def get_ports(api: BzuTech, chipid: str) -> list[str]:
 
 def get_entities(hass: HomeAssistant) -> dict[str, str]:
     """Get every entity name to send them to bzucloud."""
+    for x in hass.states.async_entity_ids(["sensor"]):
+        print(hass.states.get(x).as_dict())
 
     entityList = [
         x
@@ -118,15 +117,16 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             try:
                 self.api = await get_api(self.hass, user_input)
-            except Exception:  # pylint: disable=broad-except
-                _LOGGER.exception("Unexpected exception")
-                errors["base"] = "unknown"
+                if not await self.api.start():
+                    raise InvalidAuth("erro porra")
+            except InvalidAuth:
+                _LOGGER.exception("Invalid Auth")
+                errors["base"] = "Invalid Auth"
                 return self.async_abort(reason=errors["base"])
+
             self.email = user_input[CONF_EMAIL]
             self.password = user_input[CONF_PASSWORD]
-            if not self.hass.states.get(
-                "binary_sensor.ha_sendall"
-            ) and await mqtt.async_wait_for_mqtt_client(self.hass):
+            if not self.hass.states.get("binary_sensor.ha_sendall"):
                 return await self.async_step_typeselect(user_input=user_input)
             return await self.async_step_deviceselect(user_input)
         return self.async_show_form(
@@ -189,7 +189,14 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             self.selectedtype = user_input[CONF_TYPE]
             if self.selectedtype == "0":
                 return await self.async_step_deviceselect(user_input=user_input)
-            return await self.async_step_addentities(user_input=user_input)
+            if await mqtt.async_wait_for_mqtt_client(self.hass):
+                return await self.async_step_addentities(user_input=user_input)
+
+            return self.async_abort(
+                reason="""MQTT not configured, follow the steps in:
+                https://www.home-assistant.io/integrations/mqtt
+                to connect to Bzu broker."""
+            )
 
         return self.async_show_form(
             step_id="typeselect",
@@ -206,7 +213,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                             ],
                             mode=SelectSelectorMode.LIST,
                         )
-                    )
+                    ),
                 }
             ),
         )
