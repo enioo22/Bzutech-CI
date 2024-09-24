@@ -2,24 +2,22 @@
 
 from datetime import timedelta
 import logging
+from typing import Any
 
 from bzutech import BzuTech
-import yaml.dumper
 
 from homeassistant.components import mqtt
 from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
     BinarySensorEntity,
 )
-
-from homeassistant.const import SERVICE_RELOAD
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant, State, callback
+from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.util import dt as dt_util
-from homeassistant.util.json import json_loads_object, JsonObjectType
 
+from .config_flow import get_entities, get_sensortype
 from .const import CONF_CHIPID, CONF_ENTITY, CONF_SENSORNAME, DOMAIN
 
 SCAN_INTERVAL = timedelta(seconds=30)
@@ -42,6 +40,7 @@ sensortypes = {
 
 
 def stringtoint(name: str):
+    """Convert a string into a unique int value."""
     numero = 0
     for char in name:
         numero = numero + ord(char)
@@ -49,109 +48,14 @@ def stringtoint(name: str):
     return numero
 
 
-def get_sensortype(hass: HomeAssistant, entity: str):
-    """Get the type of sensor that is being registered."""
-    if hass.states.get(entity) is not State:
-        return sensortypes[
-            hass.states.get(entity).as_dict()["attributes"]["device_class"]
-        ]
-    return ""
-
-
-def get_triggers(event: JsonObjectType):
-    t = "  trigger:\n"
-    if "trigger" in event:
-        for e in event["trigger"]:
-            t = (
-                t
-                + f"  - platform: {e["platform"]}\n    entity_id:\n    - {e["entity_id"]}\n"
-            )
-            if "above" in e:
-                t = t + f"    above: {e["above"]}\n"
-            if "below" in e:
-                t = t + f"    below: {e["below"]}\n"
-    return t
-
-
-def get_conditions(event: JsonObjectType):
-    c = "  condition:\n"
-    if "condition" not in event:
-        return "  - condition: []"
-    if len(event["condition"]) == 0:
-        return "  - condition: []"
-
-    for e in event["condition"]:
-        c = c + f"  - condition: {e["condition"]}\n"
-        c = c + f"    entity_id: {e["entity_id"]}\n"
-        if "above" in e:
-            c = c + f"    above: {e["above"]}\n"
-        if "below" in e:
-            c = c + f"    below: {e["below"]}\n"
-
-    return c
-
-
-def get_actions(event: JsonObjectType):
-    a = "  action:\n"
-    if "action" in event:
-        for e in event["action"]:
-            a = a + f"  - action: {e["service"]}\n"
-            a = a + "    data:\n"
-            a = a + f"      message: {e["data"]["message"]}\n"
-            a = a + f"      title: {e["data"]["title"]}\n"
-
-    return a
-
-
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Setup binary sensor entity."""
+    """Do setup binary sensor entity."""
     api: BzuTech = hass.data[DOMAIN][entry.entry_id]
     sensors = []
-
-    if not await mqtt.async_wait_for_mqtt_client(hass):
-        logging.error("MQTT integration is not available")
-        return
-
-    @callback
-    async def async_create_automation(msg: mqtt.ReceiveMessage) -> None:
-        automation = "\n"
-        event = json_loads_object(msg.payload)
-
-        necessary_keys = [
-            "id",
-            "alias",
-            "description",
-            "trigger",
-            "action",
-            "mode",
-        ]
-
-        if all(k in event for k in necessary_keys):
-            automation = automation + f"- id: '{event["id"]}'\n"
-            automation = automation + f"  alias: {event["alias"]}\n"
-            automation = automation + f"  description: '{event["description"]}'\n"
-            automation = automation + get_triggers(event)
-            automation = automation + get_conditions(event)
-            automation = automation + get_actions(event)
-            automation = automation + f"  mode: {event["mode"]}"
-            # print(automation)
-
-        f = open(r"config/automations.yaml", mode="r+", encoding="utf-8")
-        size = len(f.read())
-        f.close()
-        print(automation)
-        f = open(r"config/automations.yaml", "a+", encoding="utf-8")
-        if size < 5:
-            f.truncate(0)
-        f.write(automation)
-        f.close()
-        await hass.services.async_call("automation", "reload")
-
-    await mqtt.async_subscribe(hass, "teste/ha/criaralerta", async_create_automation, 1)
 
     sensors.append(BzuBinarySensorEntity(api, entry))
     async_add_entities(sensors, update_before_add=True)
@@ -160,7 +64,11 @@ async def async_setup_entry(
 class BzuBinarySensorEntity(BinarySensorEntity):
     """Bzutech binary sensor entity."""
 
+    sent_updatechannels = False
+    number_entities = 0
+
     def __init__(self, api, entry: ConfigEntry) -> None:
+        """Set up binary sensor."""
         self.api = api
         self.sendall = entry.data["todos"]
         if self.sendall == 0:
@@ -194,35 +102,40 @@ class BzuBinarySensorEntity(BinarySensorEntity):
 
         date = str(dt_util.as_local(dt_util.now()))[:19]
         counter = 1
-        if self.sendall == 1 or self.entidades == ["Add all"]:
-            self.entidades = [
-                x
-                for x in self.hass.states.async_entity_ids(["sensor"])
-                if self.hass.states.get(x).as_dict()["attributes"]["device_class"]
-                != "timestamp"
-                and self.hass.states.get(x).name
-            ]
+        entidades = []
+        if self.sendall == 1:
+            entidades = get_entities(self.hass)[1:]
 
-        readings = {}
+        readings: dict[str, Any] = {}
         readings["Records"] = []
         readings["Records"].append({})
         readings["Records"][0]["bci"] = self.chipid
         readings["Records"][0]["date"] = date
         data = []
+        channels: dict[str, Any] = {}
+        channels["Records"] = []
+        channels["Records"].append({})
+        channels["Records"][0]["bci"] = self.chipid
+        chs = []
+
         if await mqtt.async_wait_for_mqtt_client(self.hass):
-            for entity in self.entidades:
+            for entity in entidades:
                 try:
-                    reading = float(self.hass.states.get(entity).as_dict()["state"])
+                    stt = self.hass.states.get(entity)
+                    if stt is not None:
+                        reading = stt.as_dict()["state"]
                 except (AttributeError, ValueError):
+                    logging.error("Sensor name error")
                     return
                 sensor = f"HA-{get_sensortype(self.hass, entity)}-{stringtoint(entity)}"
+                chs.append(sensor)
                 counter = counter + 1
                 data.append({"ref": sensor, "med": reading})
-                # mqtt.publish(self.hass, "teste", str(readings))
+            channels["Records"][0]["channels"] = str(chs).replace("'", r'*"')
             readings["Records"][0]["data"] = str(data).replace("'", r'*"')
-            # print(readings)
-
-            logging.warning(data)
+            if len(entidades) != self.number_entities:
+                self.number_entities = len(entidades)
+                mqtt.publish(self.hass, "UpdateChannels", str(channels))
             mqtt.publish(self.hass, "data_send", str(readings))
 
         self._attr_is_on = True

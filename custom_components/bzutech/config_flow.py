@@ -26,6 +26,7 @@ from .const import (
     CONF_CHIPID,
     CONF_ENDPOINT,
     CONF_ENTITY,
+    CONF_SENDALL,
     CONF_SENSORNAME,
     CONF_SENSORPORT,
     CONF_TYPE,
@@ -62,8 +63,7 @@ STEP_USER_LOGIN_SCHEMA = vol.Schema(
 
 async def get_api(hass: HomeAssistant, data: dict[str, Any]) -> BzuTech:
     """Validate the user input allows us to connect."""
-    api = BzuTech(data[CONF_EMAIL], data[CONF_PASSWORD])
-    return api
+    return BzuTech(data[CONF_EMAIL], data[CONF_PASSWORD])
 
 
 def get_ports(api: BzuTech, chipid: str) -> list[str]:
@@ -71,24 +71,31 @@ def get_ports(api: BzuTech, chipid: str) -> list[str]:
     return [f"Port {i} {api.get_endpoint_on(chipid, i)}" for i in range(1, 5)]
 
 
-def get_entities(hass: HomeAssistant) -> dict[str, str]:
+def get_entities(hass: HomeAssistant) -> list[str]:
     """Get every entity name to send them to bzucloud."""
-    for x in hass.states.async_entity_ids(["sensor"]):
-        print(hass.states.get(x).as_dict())
 
-    entityList = [
-        x
-        for x in hass.states.async_entity_ids(["sensor"])
-        if hass.states.get(x).as_dict()["attributes"]["device_class"] != "timestamp"
-        and hass.states.get(x).name
-    ]
-    entityList.insert(0, "Add all")
+    entityList = ["Add all"]
+    for entity in hass.states.async_entity_ids(["sensor"]):
+        stt = hass.states.get(entity)
+        if stt is not None:
+            dv = str(stt.as_dict()["attributes"])
+            dv = dv[dv.index("'device_class': '") : dv.index("', 'friendly_name'")]
+            dv = dv[17:]
+            if dv != "timestamp":
+                entityList.append(entity)
+
     return entityList
 
 
 def get_sensortype(hass: HomeAssistant, entity: str):
     """Get the sensor type to be send."""
-    return sensortypes[hass.states.get(entity).as_dict()["attributes"]["device_class"]]
+    ent = hass.states.get(entity)
+    if ent is not None:
+        dv = str(ent.as_dict()["attributes"])
+        dv = dv[dv.index("'device_class': '") : dv.index("', 'friendly_name'")]
+        dv = dv[17:]
+        return sensortypes[dv]
+    return ""
 
 
 def get_sensornumber(hass: HomeAssistant):
@@ -105,7 +112,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     password = ""
     actual = 0
     selecteddevice = 0
-    selectedtype = 0
+    selectedtype = ""
     selectedentity = ""
     selectedport = 0
 
@@ -118,7 +125,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             try:
                 self.api = await get_api(self.hass, user_input)
                 if not await self.api.start():
-                    raise InvalidAuth("erro porra")
+                    raise InvalidAuth("Authentication Error")
             except InvalidAuth:
                 _LOGGER.exception("Invalid Auth")
                 errors["base"] = "Invalid Auth"
@@ -137,25 +144,25 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         )
 
     async def async_step_addentities(
-        self, user_input: dict[str, Any] | None = None
+        self, user_input: dict[str, Any]
     ) -> ConfigFlowResult:
         """Select entities to be send."""
         if CONF_ENTITY in user_input:
+            self.selectedentity = user_input[CONF_ENTITY]
             user_input = {
                 CONF_PASSWORD: self.password,
                 CONF_TYPE: self.selectedtype,
                 CONF_EMAIL: self.email,
-                CONF_ENTITY: user_input[CONF_ENTITY],
-                "todos": 0,
+                CONF_ENTITY: self.selectedentity,
+                CONF_SENDALL: 0,
                 CONF_CHIPID: f"HA-{re.sub("[a-zA-z]", "", self.hass.data["core.uuid"][-7:])}",
-                CONF_SENSORNAME: f"HA-GEN-{get_sensornumber(self.hass)}",
+                CONF_SENSORNAME: f"HA-{get_sensortype(self.hass, user_input[CONF_ENTITY])}-{get_sensornumber(self.hass)}",
             }
             if (
                 user_input[CONF_ENTITY] == "Add all"
                 or user_input[CONF_ENTITY] == "Add every device"
             ):
-                # user_input[CONF_ENTITY] = get_entities(self.hass)
-                user_input["todos"] = 1
+                user_input[CONF_SENDALL] = 1
                 user_input[CONF_SENSORNAME] = "HA-SENDALL"
             return self.async_create_entry(
                 title=user_input[CONF_CHIPID],
@@ -182,7 +189,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         )
 
     async def async_step_typeselect(
-        self, user_input: dict[str, Any] | None = None
+        self, user_input: dict[str, Any]
     ) -> ConfigFlowResult:
         "Select if data will be gotten or sent."
         if CONF_TYPE in user_input:
