@@ -12,7 +12,7 @@ from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
     BinarySensorEntity,
 )
-from homeassistant.components.logbook import log_entry, async_log_entry
+from homeassistant.components.logbook import log_entry
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import ATTR_ENTITY_ID
 from homeassistant.core import HomeAssistant, callback
@@ -21,8 +21,8 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.util import dt as dt_util
 from homeassistant.util.json import JsonObjectType
 
-from .config_flow import get_all_entities, get_entities, get_sensortype
-from .const import CONF_CHIPID, CONF_ENTITY, CONF_SENSORNAME, DOMAIN
+from .config_flow import get_all_entities, get_sensortype
+from .const import CONF_CHIPID, CONF_ENTITY, CONF_SENDALL, CONF_SENSORNAME, DOMAIN
 
 SCAN_INTERVAL = timedelta(seconds=30)
 
@@ -107,12 +107,11 @@ class BzuBinarySensorEntity(BinarySensorEntity):
     def __init__(self, api, entry: ConfigEntry) -> None:
         """Set up binary sensor."""
         self.api = api
-        self.sendall = entry.data["todos"]
-        if self.sendall == 0:
-            self.entidades = [entry.data[CONF_ENTITY]]
+        self.sendall = entry.data[CONF_SENDALL]
+        self.entidades = entry.data[CONF_ENTITY]
 
         self.chipid = entry.data[CONF_CHIPID]
-        self.entityID = entry.data[CONF_ENTITY].replace(" ", "_")
+        self.entityID = "bzu_cloud"
         self.sensor = entry.data[CONF_SENSORNAME]
         self._attr_name = entry.data[CONF_SENSORNAME]
         self._attr_device_class = BinarySensorDeviceClass.RUNNING
@@ -136,7 +135,6 @@ class BzuBinarySensorEntity(BinarySensorEntity):
 
     def get_triggers(self, event: JsonObjectType):
         t = "  trigger:\n"
-        print(self.entity_id_bzu)
         event["entity_id"] = self.entity_id_bzu[event["canal_id"]]
         t = (
             t
@@ -158,9 +156,8 @@ class BzuBinarySensorEntity(BinarySensorEntity):
         """Upload Readings to cloud."""
 
         date = str(dt_util.as_local(dt_util.now()))[:19]
-        entidades = []
         if self.sendall == 1:
-            entidades = get_all_entities(self.hass)[1:]
+            self.entidades = get_all_entities(self.hass)
 
         readings: dict[str, Any] = {}
         readings["Records"] = []
@@ -194,7 +191,6 @@ class BzuBinarySensorEntity(BinarySensorEntity):
         async def async_create_automation(msg: mqtt.ReceiveMessage) -> None:
             automation = "\n"
             event = json.loads(msg.payload)
-            print(msg.payload)
 
             necessary_keys = [
                 "alerta_id",
@@ -255,7 +251,7 @@ class BzuBinarySensorEntity(BinarySensorEntity):
                 async_create_automation,
                 2,
             )
-            for entity in entidades:
+            for entity in self.entidades:
                 try:
                     stt = self.hass.states.get(entity)
                     if stt is not None:
@@ -269,8 +265,8 @@ class BzuBinarySensorEntity(BinarySensorEntity):
                 data.append({"ref": sensor, "med": reading})
             channels["Records"][0]["channels"] = str(chs).replace("'", r'*"')
             readings["Records"][0]["data"] = str(data).replace("'", r'*"')
-            if len(entidades) != self.number_entities:
-                self.number_entities = len(entidades)
+            if len(self.entidades) != self.number_entities:
+                self.number_entities = len(self.entidades)
                 for key in self.entity_id_bzu:  # pylint: disable=consider-using-dict-items
                     log_entry(
                         self.hass,

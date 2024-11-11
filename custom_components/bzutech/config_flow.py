@@ -16,18 +16,19 @@ from homeassistant.const import CONF_EMAIL, CONF_PASSWORD
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.selector import (
+    EntitySelector,
+    EntitySelectorConfig,
     SelectOptionDict,
     SelectSelector,
     SelectSelectorConfig,
     SelectSelectorMode,
 )
-from homeassistant.helpers.selector import BooleanSelector, BooleanSelectorConfig
-from homeassistant.components.input_boolean import InputBoolean
 
 from .const import (
     CONF_CHIPID,
     CONF_ENDPOINT,
     CONF_ENTITY,
+    CONF_SENDALL,
     CONF_SENSORNAME,
     CONF_SENSORPORT,
     CONF_TYPE,
@@ -67,8 +68,7 @@ STEP_USER_LOGIN_SCHEMA = vol.Schema(
 
 async def get_api(hass: HomeAssistant, data: dict[str, Any]) -> BzuTech:
     """Validate the user input allows us to connect."""
-    api = BzuTech(data[CONF_EMAIL], data[CONF_PASSWORD])
-    return api
+    return BzuTech(data[CONF_EMAIL], data[CONF_PASSWORD])
 
 
 def get_ports(api: BzuTech, chipid: str) -> list[str]:
@@ -160,23 +160,16 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Select entities to be send."""
-        if CONF_ENTITY in user_input:
+        if CONF_ENTITY in user_input or CONF_SENDALL in user_input:
             user_input = {
                 CONF_PASSWORD: self.password,
                 CONF_TYPE: self.selectedtype,
                 CONF_EMAIL: self.email,
+                CONF_SENDALL: user_input[CONF_SENDALL],
                 CONF_ENTITY: user_input[CONF_ENTITY],
-                "todos": 0,
                 CONF_CHIPID: f"HA-{re.sub("[a-zA-z]", "", self.hass.data["core.uuid"][-7:])}",
-                CONF_SENSORNAME: f"HA-GEN-{get_sensornumber(self.hass)}",
+                CONF_SENSORNAME: "Bzu Cloud",
             }
-            if (
-                user_input[CONF_ENTITY] == "Add all"
-                or user_input[CONF_ENTITY] == "Add every device"
-            ):
-                # user_input[CONF_ENTITY] = get_entities(self.hass)
-                user_input["todos"] = 1
-                user_input[CONF_SENSORNAME] = "Bzu Cloud"
             return self.async_create_entry(
                 title=user_input[CONF_CHIPID],
                 data=user_input,
@@ -186,15 +179,15 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="addentities",
             data_schema=vol.Schema(
                 {
+                    vol.Optional(
+                        CONF_SENDALL, default=False, msg="Send every entity"
+                    ): bool,
                     vol.Required(
                         CONF_ENTITY,
-                    ): SelectSelector(
-                        SelectSelectorConfig(
-                            options=[
-                                SelectOptionDict(value=key, label=key)
-                                for key in get_entities(self.hass)
-                            ],
-                            mode=SelectSelectorMode.DROPDOWN,
+                    ): EntitySelector(
+                        EntitySelectorConfig(
+                            domain=["sensor", "light", "switch"],
+                            multiple=True,
                         )
                     ),
                 }
